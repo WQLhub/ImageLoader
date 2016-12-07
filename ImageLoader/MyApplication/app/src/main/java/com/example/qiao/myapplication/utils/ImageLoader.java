@@ -79,9 +79,9 @@ public class ImageLoader {
 
     private ImageLoader(Context context){
         mContext = context.getApplicationContext();
+        //实例化LruCache
         int maxMemory = (int) (Runtime.getRuntime().maxMemory()/1024);
         int cacheSize = maxMemory/8;
-
         mMemoryCache = new LruCache<String, Bitmap>(cacheSize){
             @Override
             protected int sizeOf(String key, Bitmap value) {
@@ -89,11 +89,12 @@ public class ImageLoader {
             }
         };
 
-        File diskCacheDir = getDiskCacheDir(mContext,"bitmap");
+        //实例化DiskLruCache
+        File diskCacheDir = FileUtil.getDiskCacheDir(mContext,"bitmap");
         if (!diskCacheDir.exists()){
             diskCacheDir.mkdirs();
         }
-        if (getUsableSpace(diskCacheDir)>DISK_CACHE_SIZE){
+        if (FileUtil.getUsableSpace(diskCacheDir)>DISK_CACHE_SIZE){
             try {
                 mDiskLruCache = DiskLruCache.open(diskCacheDir,1,1,DISK_CACHE_SIZE);
                 mIsDiskLruCacheCreated = true;
@@ -197,7 +198,7 @@ public class ImageLoader {
         }
 
         Bitmap bitmap = null;
-        String key = hashKeyFromUrl(url);
+        String key = FileUtil.hashKeyFromUrl(url);
         DiskLruCache.Snapshot snapshot = mDiskLruCache.get(key);
         if (snapshot!=null){
 
@@ -212,54 +213,8 @@ public class ImageLoader {
     }
 
     public Bitmap loadBitmapFromMemCache(String url){
-        String key = hashKeyFromUrl(url);
+        String key = FileUtil.hashKeyFromUrl(url);
         return getBitmapFromMemoryCache(key);
-    }
-
-    private long getUsableSpace(File path){
-
-        if (Build.VERSION.SDK_INT>= Build.VERSION_CODES.GINGERBREAD){
-            return path.getUsableSpace();
-        }
-        final StatFs statFs = new StatFs(path.getPath());
-        return statFs.getBlockSizeLong()*statFs.getAvailableBlocksLong();
-
-    }
-
-    public File getDiskCacheDir(Context context,String uniqueName){
-        boolean externalStorageAvailable = Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED);
-        final String cachePath;
-        if (externalStorageAvailable){
-            cachePath = context.getExternalCacheDir().getPath();
-        }else{
-            cachePath = context.getCacheDir().getPath();
-        }
-        return new File(cachePath+File.separator+uniqueName);
-    }
-
-    private String hashKeyFromUrl(String url){
-        String cacheKey;
-        try {
-            final MessageDigest mDigest = MessageDigest.getInstance("MD5");
-            mDigest.update(url.getBytes());
-            cacheKey = bytesToHexString(mDigest.digest());
-        } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
-            cacheKey = String.valueOf(url.hashCode());
-        }
-        return cacheKey;
-    }
-
-    private String bytesToHexString(byte[] bytes){
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0;i<bytes.length;i++){
-            String hex = Integer.toHexString(0xFF&bytes[i]);
-            if (hex.length()==1){
-                sb.append('0');
-            }
-            sb.append(hex);
-        }
-        return sb.toString();
     }
 
     private Bitmap loadBitmapFromHttp(String url,int reqWidth,int reqHeight) throws Exception{
@@ -270,7 +225,7 @@ public class ImageLoader {
             return null;
         }
 
-        String key = hashKeyFromUrl(url);
+        String key = FileUtil.hashKeyFromUrl(url);
         DiskLruCache.Editor editor = mDiskLruCache.edit(key);
         if (editor!=null){
             OutputStream outputStream = editor.newOutputStream(DISK_CACHE_INDEX);
@@ -330,7 +285,5 @@ public class ImageLoader {
             this.url = url;
             this.bitmap = bitmap;
         }
-
     }
-
 }
