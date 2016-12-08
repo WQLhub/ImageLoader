@@ -1,14 +1,11 @@
-package com.example.qiao.myapplication.utils;
+package com.example.qiao.myapplication.package1;
 
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.os.Build;
-import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
-import android.os.StatFs;
 import android.support.v4.util.LruCache;
 import android.util.Log;
 import android.widget.ImageView;
@@ -24,9 +21,6 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.net.URLConnection;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
@@ -39,6 +33,26 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 
 public class ImageLoader {
+
+    /*
+    *
+    * 实现一个ImageLoader的大致思路：
+    *
+    * 1、实例化LruCache
+    *   (1)获取cacheSize，实现sizeOf方法;
+    *   (2)LruCache中数据的存取 很简单
+    * 2、实例化DiskLruCache（获取文件路径，DiskLruCache实例化）
+    *   （1）存取文件都涉及到对url的MD5加密，加密后的字符串作为key来存储内容
+    *   （2）存储的时候，需要从网络获取流，涉及到urlConnection获取inputStream，DiskLruCache获取outputStream，从in中读取，写入到out中，
+    *   实现从网络到本地Disk的转存的过程
+    *   （3）读取的时候，需要对图片进行压缩处理（本质所有读取都是从这里的，即使从网络下载也要先写入本地，再从本地读取）
+    * 3、实现最终的图片读取方法，其中涉及到三级缓存的分级读取；实现图片存储方法，涉及到三层存储；
+    * 4、实例化线程池
+    *   （1）实例化线程池的接口,ThreadFactory
+    *   （2）实例化Excutor对象
+    *   （3）实例化图片加载的Task
+    * */
+
 
     private static final String TAG = "ImageLoader";
     public static final int MESSAGE_POST_RESULT = 1;
@@ -169,6 +183,61 @@ public class ImageLoader {
         return bitmap;
     }
 
+    private Bitmap loadBitmapFromDiskCache(String url,int reqWidth,int reqHeight)throws Exception{
+        if (Looper.myLooper()==Looper.getMainLooper()){
+            Log.w(TAG,"load bitmap from UI Thread,it is not recommend!");
+        }
+        if (mDiskLruCache==null){
+            return null;
+        }
+
+        Bitmap bitmap = null;
+        String key = FileUtil.hashKeyFromUrl(url);
+        DiskLruCache.Snapshot snapshot = mDiskLruCache.get(key);
+        if (snapshot!=null){
+            FileInputStream fileInputStream = (FileInputStream) snapshot.getInputStream(DISK_CACHE_INDEX);
+            FileDescriptor fileDescriptor = fileInputStream.getFD();
+            bitmap = mImageResize.decodeSampledBitmapFromFileDecriptor(fileDescriptor,reqWidth,reqHeight);
+            if (bitmap!=null){
+                addBitmapToMemoryCache(key,bitmap);
+            }
+        }
+        return bitmap;
+    }
+
+    public Bitmap loadBitmapFromMemCache(String url){
+        String key = FileUtil.hashKeyFromUrl(url);
+        return getBitmapFromMemoryCache(key);
+    }
+
+    //从Http下载流，然后缓存到本地，再从本地取出还原成图片返回
+    private Bitmap loadBitmapFromHttp(String url,int reqWidth,int reqHeight) throws Exception{
+        if (Looper.myLooper()==Looper.getMainLooper()){
+            throw new RuntimeException("can not visit network from UI Thread");
+        }
+        if (mDiskLruCache==null){
+            return null;
+        }
+        addBitmapToDisk(url);
+        return loadBitmapFromDiskCache(url, reqWidth, reqHeight);
+    }
+
+    //其中掺杂网络操作   因为只有网络下载下来的图片才有加载到本地磁盘的必要
+    private void addBitmapToDisk(String url)throws Exception{
+        String key = FileUtil.hashKeyFromUrl(url);
+        DiskLruCache.Editor editor = mDiskLruCache.edit(key);
+        if (editor!=null){
+            OutputStream outputStream = editor.newOutputStream(DISK_CACHE_INDEX);
+            if (downloadUriToStream(url,outputStream)){
+                editor.commit();
+            }else {
+                editor.abort();
+            }
+            mDiskLruCache.flush();
+        }
+    }
+
+    //直接从网络上获取到Bitmap
     private Bitmap downloadBitmapFromUri(String urlString){
         Bitmap bitmap = null;
         HttpURLConnection urlConnection = null;
@@ -196,56 +265,7 @@ public class ImageLoader {
         return bitmap;
     }
 
-    private Bitmap loadBitmapFromDiskCache(String url,int reqWidth,int reqHeight)throws Exception{
-        if (Looper.myLooper()==Looper.getMainLooper()){
-            Log.w(TAG,"load bitmap from UI Thread,it is not recommend!");
-        }
-        if (mDiskLruCache==null){
-            return null;
-        }
-
-        Bitmap bitmap = null;
-        String key = FileUtil.hashKeyFromUrl(url);
-        DiskLruCache.Snapshot snapshot = mDiskLruCache.get(key);
-        if (snapshot!=null){
-
-            FileInputStream fileInputStream = (FileInputStream) snapshot.getInputStream(DISK_CACHE_INDEX);
-            FileDescriptor fileDescriptor = fileInputStream.getFD();
-            bitmap = mImageResize.decodeSampledBitmapFromFileDecriptor(fileDescriptor,reqWidth,reqHeight);
-            if (bitmap!=null){
-                addBitmapToMemoryCache(key,bitmap);
-            }
-        }
-        return bitmap;
-    }
-
-    public Bitmap loadBitmapFromMemCache(String url){
-        String key = FileUtil.hashKeyFromUrl(url);
-        return getBitmapFromMemoryCache(key);
-    }
-
-    private Bitmap loadBitmapFromHttp(String url,int reqWidth,int reqHeight) throws Exception{
-        if (Looper.myLooper()==Looper.getMainLooper()){
-            throw new RuntimeException("can not visit network from UI Thread");
-        }
-        if (mDiskLruCache==null){
-            return null;
-        }
-
-        String key = FileUtil.hashKeyFromUrl(url);
-        DiskLruCache.Editor editor = mDiskLruCache.edit(key);
-        if (editor!=null){
-            OutputStream outputStream = editor.newOutputStream(DISK_CACHE_INDEX);
-            if (downloadUriToStream(url,outputStream)){
-                editor.commit();
-            }else {
-                editor.abort();
-            }
-            mDiskLruCache.flush();
-        }
-        return loadBitmapFromDiskCache(url, reqWidth, reqHeight);
-    }
-
+    //从网络上获取到图片流，写入到DiskLruCache的输出流中
     public boolean downloadUriToStream(String urlString,OutputStream outputStream){
         HttpURLConnection urlConnection = null;
         BufferedOutputStream out = null;
