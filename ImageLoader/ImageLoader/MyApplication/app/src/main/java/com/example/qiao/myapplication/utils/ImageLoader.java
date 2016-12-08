@@ -67,8 +67,15 @@ public class ImageLoader {
     private Handler mMainHandler = new Handler(Looper.getMainLooper()) {
         @Override
         public void handleMessage(Message msg) {
-            super.handleMessage(msg);
-
+            LoaderResult result = (LoaderResult) msg.obj;
+            ImageView imageView = result.imageView;
+//            imageView.setImageBitmap(result.bitmap);
+            String uri = (String) imageView.getTag();
+            if (uri.equals(result.url)){
+                imageView.setImageBitmap(result.bitmap);
+            }else {
+                Log.w(TAG,"set image bitmap,but url has changed,ingored;");
+            }
         }
     };
 
