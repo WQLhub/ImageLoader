@@ -1,1 +1,14 @@
 /build
+.gradle/*
+.idea/*
+build/*
+gradle/*
+gradlew
+*.bat
+local.properties
+*.apk
+*.iml
+classes/*
+target/*
+plugin/*
+gen-external-apklibs/*
